@@ -1,0 +1,635 @@
+---
+title: "DATA100 Project: Exploring the Impact of Development on COVID-19 Statistics"
+author: "Chris Chan"
+date: "09/12/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(readr)
+library(stringr)
+library(tidyr)
+library(lubridate)
+library(modelr)
+```
+
+
+
+# Table of Contents
+- Introduction
+- Data Descriptions
+- Descriptive Statistics and Exploratory Analysis
+- Conclusions
+- Appendices
+
+
+
+  
+# Introduction:
+   I learned about the human development index (HDI) in one of my other courses and decided that it would be an interesting topic. HDI is a relative measurement of a country's economic and social development, and is based on three areas of interest: health care, denoted by life expectancy; education, denoted by the average years of schooling; and standard of living, denoted by the country's GNI per capita. For the sake of this project, HDI will be viewed in a more general sense as a measure of the degree of a country's development - that is, countries with higher HDI values are more developed (what that specifically means is beyond this report) than those with lower HDI values.
+     
+   This report includes the use of 12 data sets (the descriptions of which can be found below), 7 of which concern 4 potential factors of interest: educational, economical, health, and infrastructure. With these data sets, this report will showcase the exploration of the data in determining whether or not these factors are related to the level of observed COVID-related statistics at a given time and given region. In doing so, this report will also attempt to answer two more questions:
+   
+1) Is there a relationship between a countries' degree of development and the COVID-related statistics observed?
+2) Is there a particular area of development - given by the concept of the HDI - that is strongly correlated with the amount, or lack there of, of COVID-related statistics?
+
+
+This project will be particularly interested in the relationship on particular dates: March 15, 2021 and September 9, 2021. The first date was chosen because it is roughly a year after COVID-19 became a true global concern (I remember it was around this date in 2020 when schools were shut down in Ontario, which was already considerably late from a global perspective). It also stands as a point of time before the vaccine had been developed and distributed. The second date was chosen because it marked the start of the fall term for post-secondary students in Ontario. This is interesting because vaccines should have been largely distributed in preparation for the return to school.
+
+On these dates, there is an expectation that health as a factor is most likely to affect the COVID deaths, tests, and vaccinations of a region. This also coincides with another factor to be explored: infrastructure; a country with better health infrastructure has a better chance of dealing with the virus. General infrastructure is also likely to coincide with COVID-statistics. For example, I expect more urbanized countries to have more cases of infection due to proximity. This leaves education as the least likely factor to affect the numbers of COVID-19; the virus doesn't care how educated a population is, it infects everyone equally.
+
+
+
+## Data Set Descriptions
+Note: Data set names are given as downloaded from the MLS page and from the provided links.
+
+
+Health:
+
+  - **LIFEEXPECTANCYATBIRTH.csv**: Overall average life expectancy in years, as well as between gender demographics.
+  - **DEATHRATE.csv**: Death rate in the region per 1000 population. Also gives the countries' relative rank and the year in which the data is from.
+  - **HEALTHEXP.csv**: Annual health expenditure in the region, given by USD per capita from 2000 to 2020
+  
+  
+Standard of Living:
+
+  - **INTERNETUSER.csv**: The annual percentage of a region's population that has access to the internet from 2000 to 2020
+  - **URBANIZATION.csv**: The annual percentage of the population living in urban areas from 2000 to 2020
+  - **WorldHappinessReport2021-Score.csv**: A number between 0 and 10 which measures the happiness of a region. Is a result of a survey in which people were asked to give a number between 0 and 10 which represents how they currently feel in life and concerns the years from 2018 to 2020.
+
+  
+Education:
+
+  - **EDUEXP.csv**: The percentage of a region's GDP spent on education. Also ranks the region's from highest to lowest, states which broader region it belongs to, and gives the year the percentage concerns.
+  
+  
+COVID:
+
+  - **covid_complete.csv**: A complete set of data for each region, extending beyond COVID-related statistics into areas including population distribution and infrastructure. For this project, only a subset of the COVID-related statistics were taken into account. Records daily observations from the early days of 2020 to the data sets' last update.
+  - **covid_response.csv**: Daily observations of governments' responses to COVID. Concerns areas such as the status of school closures and stay-at-home policy.
+  - **covid_tests.csv**: Daily observations concerning a region's COVID testing totals and rates.
+  - **covid_vaccinations.csv**: Daily observations concerning a region's vaccination totals and rates.
+
+
+Miscellaneous:
+
+  - **WorldRegions.csv**: Classifies regions as being part of the Global South or the Global North
+  
+```{r, include = FALSE}
+# Takes a data frame and replaces any spaces in column names with "_"
+# Parameters:
+#     df: a data frame
+# Returns:
+#     NULL
+remove_space <- function(df) {
+  names(df) <- str_replace_all(names(df), " ", "_")
+  df
+}
+
+```
+
+
+```{r, include = FALSE}
+# Data Sets which aim to measure Standard of Living, which represent infrastructure and economic factors.
+
+internet <- read_tsv("data/INTERNETUSER.csv") 
+
+# Tidy INTERNETUSER.csv
+internet_by_country <- internet %>%
+  remove_space() %>%
+  gather('2000':'2020', key = "year", value = "percentage") %>%
+  group_by(Country_Name, Country_Code) %>%
+  nest() %>%
+  `colnames<-`(c("Country", "iso_code", "internet_data"))
+
+internet_by_country
+
+
+happiness <- read_tsv("data/WorldHappinessReport2021-Score.csv")
+happiness_by_country <- happiness %>%
+  remove_space() %>%
+  select(Country_name, Ladder_score) %>%
+  `colnames<-`(c("Country", "happiness_score")) %>%
+  mutate(happiness_rank = 1:nrow(happiness))
+
+
+happiness_by_country
+
+
+urbanization <- read_tsv("data/urbanization.csv")
+
+
+urbanization_by_country <- urbanization %>% gather('2000':'2020', key = "Year", value = "Percentage") %>%
+  remove_space() %>%
+  group_by(Country_Name, Country_Code) %>%
+  nest() %>%
+  `colnames<-`(c("Country", "iso_code", "urbanization_data"))
+
+urbanization_by_country
+```
+```{r, include = FALSE}
+# Data Sets which aim to measure health
+life_expectancy <- read_tsv("data/LIFEEXPECTANCYATBIRTH.csv")
+
+
+life_exp2 <- life_expectancy %>%
+  spread(key = key, value = value) %>%
+  remove_space() %>%
+  select(region, total_population, male, female) %>%
+  `colnames<-`(c("Country", "life_expectancy", "male_life_exp", "female_life_exp"))
+
+
+life_exp_by_country <- life_exp2 %>%
+  mutate(life_expectancy = as.double(str_remove(life_expectancy, " years")),
+         male_life_exp = as.double(str_remove(male_life_exp, " years")),
+         female_life_exp = as.double(str_remove(female_life_exp, " years \\(2021 est.\\)")))
+
+life_exp2
+
+
+health_exp <- read_tsv("data/HEALTHEXP.csv")
+health_exp
+
+health_exp_by_country <- health_exp %>%
+  remove_space() %>%
+  gather("2000":"2020", key = "Year", value = "USD_per_capita") %>%
+  group_by(Country_Name, Country_Code) %>%
+  nest() %>%
+  `colnames<-`(c("Country", "iso_code", "health_exp_data"))
+
+health_exp_by_country
+
+
+death_rate <- read_tsv("data/DEATHRATE.csv") %>%
+  `colnames<-`(c("Country", "death_rate", "Year", "death_rate_rank", "region")) %>%
+  mutate(death_rate_year = as.double(str_remove(Year, " est."))) %>%
+  select(Country, death_rate_year, death_rate_rank, death_rate)
+
+death_rate
+```
+```{r, include = FALSE}
+edu_exp_by_country <- read_tsv("data/EDUEXP.csv") %>%
+  select(name, date_of_information, ranking, value) %>%
+  `colnames<-`(c("Country", "edu_exp_year", "edu_exp_rank", "edu_exp"))
+
+edu_exp_by_country
+```
+
+```{r, include = FALSE}
+# The COVID-related data sets
+covid_complete <- read_csv("data/covid_complete.csv")
+
+
+covid_complete_by_country <- covid_complete %>%
+  select(iso_code, continent, location, date, total_cases, new_cases, total_deaths, new_deaths) %>%
+  group_by(location, continent, iso_code) %>%
+  nest() %>%
+  `colnames<-`(c("iso_code", "continent", "Country", "complete_data"))# %>%
+  #filter(substr(iso_code, 1, 4) != "OWID")
+covid_complete_by_country
+
+
+covid_response <- read_csv("data/covid_response.csv")
+
+
+covid_response_by_country <- covid_response %>%
+  filter(Jurisdiction == "NAT_TOTAL") %>%  
+  mutate(date = ymd(Date)) %>%
+  select(CountryName, CountryCode, date, `C1_School closing`, `C6_Stay at home requirements`, `H4_Emergency investment in healthcare`, `H5_Investment in vaccines`) %>%
+  group_by(CountryName, CountryCode) %>%
+  nest() %>%
+  `colnames<-`(c("Country", "iso_code", "response_data"))
+
+covid_response_by_country
+
+
+covid_tests <- read_csv("data/covid_tests.csv")
+
+covid_tests_by_country <- covid_tests %>% separate(Entity, into = c("Country", "Status"), sep = " - ") %>%
+  remove_space() %>%
+  select(Country, ISO_code, Date, Cumulative_total, Cumulative_total_per_thousand) %>%
+  `colnames<-`(c("Country", "iso_code", "date", "total", "total_per_thousand")) %>%
+  group_by(Country, iso_code) %>%
+  nest() %>%
+  `colnames<-`(c("Country", "iso_code", "testing_data"))
+
+covid_tests_by_country
+
+
+covid_vaccinations <- read_csv("data/covid_vaccinations.csv")
+#covid_vaccinations
+
+covid_vaccinations_by_country <- covid_vaccinations %>%
+  select(location, iso_code, date, total_vaccinations, people_fully_vaccinated, daily_people_vaccinated) %>%
+  group_by(location, iso_code) %>%
+  nest() %>%
+  `colnames<-`(c("Country", "iso_code", "vaccination_data"))
+
+covid_vaccinations_by_country
+```
+
+```{r, include = FALSE}
+regions <- read_tsv("data/WorldRegions.csv", skip = 1) %>%
+  remove_space() %>%
+  select(Country, Global_South) %>%
+  `colnames<-`(c("Country", "development_category"))
+
+regions
+```
+
+```{r, include = FALSE}
+# Alternate semi_join() and left_join() to ensure there are no NULL values in the resulting combined data frames (specifically, with the nested tibbles)
+covid_data <- semi_join(regions, covid_complete_by_country, by = "Country")%>%
+  left_join(covid_complete_by_country) %>%
+  semi_join(covid_response_by_country, by = "Country") %>%     # LEFT OFF HERE; TRYING TO JOIN THEM SUCH THAT NO MORE NULL VALUES
+  left_join(covid_response_by_country) %>%
+  semi_join(covid_tests_by_country, by = "Country") %>%
+  left_join(covid_tests_by_country) %>%
+  semi_join(covid_vaccinations_by_country, by = "Country") %>%
+  left_join(covid_vaccinations_by_country)
+
+# The following combined data frame follows the same principle of joining as the one above.
+# Contains 5 of 8 data sets excluding: happiness, death rate, and education expenditure
+country_data <- semi_join(regions, life_exp_by_country, by = "Country") %>%
+  left_join(life_exp_by_country) %>%
+  semi_join(health_exp_by_country, by = "Country") %>%
+  left_join(health_exp_by_country) %>%
+  select(Country, development_category, iso_code, life_expectancy, male_life_exp, female_life_exp, health_exp_data) %>%  # Reorder columns just for organization
+  semi_join(internet_by_country, by = "Country") %>%
+  left_join(internet_by_country) %>%
+  semi_join(urbanization_by_country) %>%
+  left_join(urbanization_by_country)
+
+
+# Contains data from the other 3 data sets which rank countries
+country_ranks <- left_join(regions, happiness_by_country) %>%
+  left_join(edu_exp_by_country) %>%
+  left_join(death_rate)
+
+covid_data
+country_data
+country_ranks
+```
+
+
+
+## Descriptive Statistics and Exploratory Analysis
+Let's begin by looking at the human development index (HDI) of each country, given by the data set 'covid_complete.csv'. 
+```{r, echo = FALSE}
+hdi <- covid_complete %>%
+  select(location, iso_code, human_development_index) %>%
+  distinct() %>%
+  `colnames<-`(c("Country", "iso_code", "human_development_index"))
+
+hdi
+```
+For the purposes of this project, I will be exploring the extremes of this data: the most "developed" countries, and the least, because if there is any relationship to be seen between COVID-19 and how developed a country is, it will be the most evident at the extremes, between the most and least developed countries.
+
+The first table lists the 20 countries/regions with the highest HDI rating. The second table lists the countries/regions with the lowest HDI rating.
+
+```{r, echo=FALSE}
+best_hdi <- hdi %>%
+  arrange(desc(human_development_index)) %>%
+  head(20)
+
+worst_hdi <- hdi %>%
+  arrange(human_development_index) %>%
+  head(20)
+
+best_hdi
+worst_hdi
+```
+
+
+To avoid any errors, I will need to determine which of these 40 countries actually have complete data.
+Using various 'semi_joins()', along with the combined data sets which represent the countries for which we have complete data, we obtain the following.
+For the purposes of this project, the analysis will center around the top four countries in the resulting tables.
+
+On a side note, Unsurprisingly, only a fraction of the "least developed" countries have data, compared to the "most developed", where all but one do.
+
+
+```{r, echo = FALSE}
+semi_join(covid_data, country_data, by = "Country") %>%
+  semi_join(country_ranks, by = "Country") %>%
+  semi_join(y = ., x = best_hdi)
+
+semi_join(covid_data, country_data, by = "Country") %>%
+  semi_join(country_ranks, by = "Country") %>%
+  semi_join(y = ., x = worst_hdi)
+
+top_hdi <- semi_join(covid_data, country_data, by = "Country") %>%
+  semi_join(country_ranks, by = "Country") %>%
+  semi_join(y = ., x = best_hdi) %>%
+  head(4)
+
+bottom_hdi <- semi_join(covid_data, country_data, by = "Country") %>%
+  semi_join(country_ranks, by = "Country") %>%
+  semi_join(y = ., x = worst_hdi) %>%
+  head(4)
+
+
+hdi_sub <- bind_rows(top_hdi, bottom_hdi)
+```
+
+To explore how COVID is impacting a countries' development, we first need to get a better understanding of how these countries have developed thus far. We are specifically going to look at health expenditure first, since COVID-19 is a global health crisis.
+
+
+```{r, echo=FALSE, warning=FALSE}
+
+semi_join(health_exp_by_country, hdi_sub) %>%
+   unnest() %>%
+   ggplot(mapping = aes(x = Year, y = USD_per_capita, group = Country, color = Country)) +
+    geom_line() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+
+As you can see from the graph, only 4 lines are truly visible. The 4 that are not visible are the 4 countries with the lowest HDI; their health expenditure is marginal when compared to the most developed countries, even in 2020.
+
+As stated earlier, countries with better overall health *should* see better rates for COVID testing as well as vaccinations. Let's explore that.
+
+```{r, echo=FALSE, warning=FALSE}
+covid_data_sub <- semi_join(covid_data, hdi_sub)
+
+covid_data_sub %>%
+  select(Country, testing_data) %>%
+  unnest() %>%
+  ggplot(aes(x = date, y = total_per_thousand, group = Country, color = Country)) +
+    geom_line() +
+    ggtitle("Number of COVID tests administered")
+
+
+covid_data_sub %>%
+  select(Country, vaccination_data) %>%
+  unnest() %>%
+  ggplot(aes(x = date, y = total_vaccinations, group = Country, color = Country)) +
+    geom_line() +
+    ggtitle("Total Number of COVID vaccines administered")
+```
+
+
+At a glance, we can see there is an upward trend all around; each of health expenditure, total COVID tests administered, and total vaccinations are all increasing over time. 
+
+
+Note: For most of the remaining analysis, linear regression models, and more specifically, the predictions that come from them will be used when plotting further data. Additionally, the red dots on the plots signify the data on our chosen dates.
+
+
+Is there a way in which we can see it all together?
+```{r, include = FALSE, warning=FALSE}
+# Creating models and adding predictions of 3/4 covid-related data sets
+covid_test_model <- covid_tests_by_country %>%
+  semi_join(covid_data_sub) %>%
+  mutate(testing_model = map(testing_data, function(df)lm(total_per_thousand~date, data = df))) %>%
+  mutate(per_thousand_pred = map2(testing_data, testing_model, add_predictions))
+
+
+covid_models <- covid_complete_by_country %>%
+  semi_join(covid_data_sub) %>%
+  mutate(death_models = map(complete_data, function(df)lm(new_deaths~date, data =df)),
+         case_models = map(complete_data, function(df)lm(total_cases~date, data = df))) %>%
+  mutate(deaths_pred = map2(complete_data, death_models, add_predictions),
+         cases_pred = map2(complete_data, case_models, add_predictions))
+
+
+vaccination_models <- covid_vaccinations_by_country %>%
+  semi_join(covid_data_sub) %>%
+  mutate(total_model = map(vaccination_data, function(df)lm(total_vaccinations~date, data = df))) %>%
+  mutate(vaccination_pred = map2(vaccination_data, total_model, add_predictions))
+
+covid_test_model
+covid_models
+vaccination_models
+
+```
+
+Pictured below is a collection of graphs depicting the predicted number of COVID-tests per thousand for each of out 8 countries. Additionally, each line is coloured based on the countries' health expenditure, measured in USD per capita.
+
+As we saw earlier, there is an overall positive trend with regards to the number of tests administered, and what stands out is the subset of countries with a significant positive trend: the 4 countries representing the highly developed countries and who spend the most on health.
+```{r, echo=FALSE, warning=FALSE}
+# Health Expenditure vs Tests
+
+covid_test_on_dates <- covid_test_model %>%
+  unnest(cols = per_thousand_pred) %>%
+  filter(date == ymd("20210315") | date == ymd("20210909")) %>%
+  select(Country, date, pred)
+
+
+semi_join(health_exp_by_country, hdi_sub) %>%
+  unnest() %>%
+  filter(Year == "2018") %>%  # this is because from inspection, this is the latest year with complete data
+  left_join(covid_test_model) %>%
+  unnest(per_thousand_pred) %>%
+  ggplot() +
+    geom_line(aes(x = date, y =pred, colour = USD_per_capita)) +
+    geom_point(data = covid_test_on_dates, aes(x = date, y = pred), colour = "red", size = 1.5) +
+    facet_wrap(~Country) +
+    ylab("Predicted Covid tests per thousand")
+
+```
+
+Moving onto the next representative of the health fact, we're going to take a look at the death rate of countries. In a similar fashion to the one prior, below is a collection of plots, one for each country, which plots the predicted new deaths from COVID-19.
+
+This time around, there does not appear to be an overall trend; some countries are trending upwards, some downwards, and others remain relatively flat. Examine each country's death rate and South Sudan stands out as peculiar; its death rate is among the highest of the 8 and yet its daily COVID deaths show no significant trend. In fact, looking closely, it even appears to be trending downwards, albeit slightly. Compare this to Mozambique which shows a more expected result; its death rate is comparable to that of South Sudan's but its daily COVID deaths continue to rise. From this, it is clear that either there may not be a significant relationship between the two, or that the relationship is simply overshadowed by external factors.
+```{r, echo=FALSE, warning=FALSE}
+deaths_on_dates <- covid_models %>%
+  unnest(deaths_pred) %>%
+  filter(date == ymd("20210315") | date == ymd("20210909")) %>%
+  #mutate(pred = as.integer(pred)) %>%
+  select(Country, date, pred)
+
+semi_join(country_ranks, covid_data_sub) %>%
+  left_join(covid_models) %>%
+  unnest(deaths_pred) %>%
+  ggplot() +
+    geom_line(aes(x = date, y = pred, colour = death_rate)) +
+    geom_point(data = deaths_on_dates, aes(x = date, y = pred), size = 1.5, colour = "red") +
+    facet_wrap(~Country) +
+    ylab("Predicted New Deaths")
+
+```
+
+
+Next, we will look at a countries' life expectancy and its COVID testing per thousand.
+
+
+There is nothing surprising here; countries whose life expectancy is higher are testing significantly more than those whose life expectancy is lower. More than likely, this stems from the fact that countries that live longer have the pre-existing infrastructure and systems that are capable. It may also be that in countries with a lower life expectancy, there are more inherent and systematic issues to deal with than in testing for COVID-19. 
+
+
+None of our 8 countries stand out in this aspect.
+
+
+```{r, echo=FALSE, warning=FALSE}
+# Life Expectancy and COVID testing
+
+semi_join(country_data, covid_test_model) %>%#
+  left_join(covid_test_model) %>%
+  select(Country, development_category, life_expectancy, per_thousand_pred) %>%
+  unnest(per_thousand_pred) %>%
+  ggplot() +
+    geom_line(aes(x = date, y =pred, colour = life_expectancy)) +
+    geom_point(data = covid_test_on_dates, aes(x = date, y = pred), colour = "red", size = 1.5) +
+    facet_wrap(~Country) +
+    ylab("Tests Per Thousand Administered")
+```
+
+The following plots look at a country's happiness and its' governments' response to COVID-19. This is the only data that is not modelled as it features discrete values. 
+
+
+Before analyzing this, we must first learn what the values mean. According to the codebook associated with the data, values exist on a scale of 0 to 3 representing the status of "stay-at-home" measures, with each level meaning the following:
+
+  - 0: no measures in place
+  - 1: Recommended to not leave the house
+  - 2: Leaving the house for non-essential trips is prohibited
+  - 3: Leaving the house is prohibited with few exceptions
+  
+
+```{r, echo=FALSE, warning=FALSE}
+response_on_dates <- covid_response_by_country %>%
+  semi_join(hdi_sub) %>%
+  unnest(response_data) %>%
+  filter(date == ymd("20210315") | date == ymd("20210909")) %>%
+  remove_space()
+
+
+semi_join(country_ranks, covid_data_sub) %>%
+  left_join(semi_join(covid_response_by_country,  hdi_sub)) %>%
+  unnest(response_data) %>%
+  remove_space() %>%
+  ggplot() +
+    geom_line(aes(x = date, y =C6_Stay_at_home_requirements, colour = happiness_score)) +
+    geom_point(data = response_on_dates, aes(x = date, y = C6_Stay_at_home_requirements), colour = "red", size = 1) +
+    facet_wrap(~Country)
+```
+
+For the most part, there appears to be no connection between happiness and the governments' response. The happier countries vary greatly in their response to the pandemic; where Ireland saw multiple adjustments over the roughly 2 years, Iceland remained as normal with no measures in place. 
+
+Looking specifically at our chosen dates, as surprising as it may be, Ethiopia is one of two countries who had moved away from lock down by March 15, 2021, the other being Iceland. Despite having a happiness score on the lower end of the spectrum, it is arguably second in terms of how little it strayed from the norm that is regular life. 
+
+This furthers the notion that there is no relationship here.
+
+
+If anything, it would be more interesting to see if geographical location is more of a factor in this scenario.
+
+
+
+
+
+Next, we are going to take a look at urbanization and predicted COVID-infections.
+
+
+```{r, echo=FALSE, warning=FALSE}
+cases_on_date <- covid_models %>%
+  unnest(cases_pred) %>%
+  filter(date == ymd("20210315") | date == ymd("20210909")) %>%
+  mutate(pred = as.integer(pred)) %>%
+  select(Country, date, total_cases, pred)
+
+
+urbanization_by_country %>%
+  semi_join(hdi_sub) %>%
+  unnest(urbanization_data) %>%
+  group_by(Year) %>%
+  arrange(desc(Year)) %>%
+  head(8) %>%     # Get most recent values
+  select(Country, Percentage) %>%
+  right_join(covid_models) %>%
+  select(Country, Percentage, cases_pred) %>%
+  unnest(cases_pred) %>%
+  filter(pred > 0) %>%
+  ggplot() +
+    geom_line(aes(x = date, y = pred, colour = Percentage)) +
+    geom_point(data = cases_on_date, aes(x = date, y = pred), colour = "red", size = 1.5) +
+    facet_wrap(~Country) +
+    ylab("Predicted Cases")
+    
+  
+```
+
+
+Looking at the percentage of urbanization, the two at the top appear to be Iceland and Norway. These two fair quite well compared to the other countries in terms of COVID cases. It must be noted however, that his may be skewed by the fact that these are modeled from the given data, and some of the countries may lack the data to create an accurate model. 
+
+
+Here, Switzerland stands out as the country with a high number of cases despite its status as one of the most developed countries. Perhaps then, urbanization, and thus infrastructure is actually a significant factor towards COVID infections; while two of the most developed countries in the world, Switzerland and Ireland are less urbanized than Iceland and Norway while also having more cases.
+
+
+
+
+
+Keeping on the topic of infrastructure, lets investigate COVID cases in a country as compared to the amount of its internet users.
+
+
+Note: South Sudan has no data for its internet usage.
+
+```{r, echo=FALSE, warning=FALSE}
+# Cases and Internet Users
+internet_by_country %>%
+  semi_join(hdi_sub) %>%
+  unnest(internet_data) %>%
+  arrange(desc(year)) %>%
+  head(8) %>%
+  left_join(covid_models) %>%
+  unnest(cases_pred) %>%
+  filter(pred > 0) %>%
+  ggplot() +
+    geom_line(aes(x = date, y = pred, colour = percentage)) +
+    geom_point(data = cases_on_date, aes(x = date, y = pred), colour = "red", size = 1.5) +
+    facet_wrap(~Country) +
+    ylab("Predicted cases")
+  
+```
+
+There is nothing clear about the results here. Norway is clearly the leader in terms of the percentage of the population with access to the internet, but Iceland appears to be doing better in terms of cases, and Switzerland is doing worse. This may not be as significant a factor when considering the fact that with the way this plot has been set up, countries with lower populations will appear to do better in terms of cases, simply because there are less people to be infected.
+
+
+
+
+Finally, let's take a look at our last factor: education. From the provided, data, education expenditure is the only education-related data set, which is something that must be kept in mind.
+
+Note: Education expenditure is given in the most recent year, for example, South Sudan's is the oldest data, dating back to 2016, the rest falling somewhere in the middle.
+
+```{r, echo=FALSE, warning=FALSE}
+# Education and Vaccinations
+vaccination_on_dates <- vaccination_models %>%
+  unnest(vaccination_pred) %>%
+  filter(date == ymd("20210315") | date == ymd("20210909")) %>%
+  select(Country, date, pred)
+
+
+edu_exp_by_country %>%
+  semi_join(hdi_sub) %>%
+  left_join(vaccination_models) %>%
+  unnest(vaccination_pred) %>%
+  filter(pred > 0)
+
+edu_exp_by_country %>%
+  semi_join(hdi_sub) %>%
+  left_join(vaccination_models) %>%
+  unnest(vaccination_pred) %>%
+  filter(pred > 0) %>%
+  ggplot() +
+    geom_line(aes(x = date, y = pred, colour = edu_exp)) +
+    geom_point(data = vaccination_on_dates, aes(x = date, y = pred), colour = "red", size = 1.5) +
+    facet_wrap(~Country) +
+    ylab("Predicted Total Vaccinations")
+```
+
+The thought process here was that a more highly educated population is more likely to get the vaccine due to a stronger belief in the science that supports it. The problem here is that education expenditure is not necessarily indicative of the education of the population, particularly when its measured as a percentage of the countries' GDP. Switzerland and Ethiopia appear to have similar levels of education expenditure, but more than likely, Switzerland's GDP outclasses that of Ethiopia, lending to a significant difference in actual education expenditure.
+
+
+As a result, there appears to be little in the way of any relationship between the two.
+
+
+
+
+## Conclusion
+For the most part, the more developed countries saw better overall results with regards to COVID-statistics: cases and deaths were relatively lower while tests and vaccinations were higher than those of the less developed countries. There were some inconsistencies with the results compared to what was expected, and some of those were highlighted in the analysis. There are many possible unknown external factors that that may have affected the numbers beyond those examined in this report, In some cases, the choice of data also led to misleading results, from which the potential factor was known but no conclusion could be made regarding our own.
+     
+More specifically to the factors chosen for this project, it was assumed that health factors would contribute the most to the numbers of a global health crisis. As it turns out, that is not exactly the case. With the given data sets, while the health-related data proved to be more influential, it often implicated factors aside from health. Thus, from the exploration, it is difficult to establish a true correlation between health and the COVID-19 numbers. One major implication found from the health-data was an inferred presence of pre-established health infrastructure. As a result, it can be argued that infrastructure, and thus standard of living, is the aspect of the HDI which holds the most influence over the numbers from COVID-19.
+
+
